@@ -20,6 +20,7 @@
             margin-bottom: 20px;
             font-size: 1.1em;
             color: #555;
+            min-height: 1.2em; /* Para evitar que la página salte */
         }
         #webcam-container {
             border: 2px solid #ddd;
@@ -36,60 +37,53 @@
 <body>
 
     <h1>Proyecto con Carga Automática</h1>
-    <div id="status">Cargando modelo y buscando cámara...</div>
+
+    <div id="status">Cargando...</div>
     <div id="webcam-container"></div>
     <div id="label-container"></div>
-
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
 
     <script type="text/javascript">
         const URL = "./lado ds/";
 
-        let model, webcam, labelContainer, statusDiv;
+        let model, webcam, labelContainer;
+        
+        // Función para actualizar el estado de forma segura
+        function updateStatus(message) {
+            const statusDiv = document.getElementById("status");
+            if (statusDiv) {
+                statusDiv.innerText = message;
+            } else {
+                console.error("No se encontró el div de estado (#status)");
+            }
+        }
 
         async function init() {
-            statusDiv = document.getElementById("status");
+            updateStatus("Cargando modelo y buscando cámara...");
             const modelURL = URL + "model.json";
             const metadataURL = URL + "metadata.json";
 
             try {
-                // Carga el modelo y los metadatos simultáneamente
                 model = await tmImage.load(modelURL, metadataURL);
-                statusDiv.innerText = "Modelo cargado. Buscando cámaras...";
+                updateStatus("Modelo cargado. Buscando cámaras...");
 
-                // --- Lógica mejorada para seleccionar la cámara externa ---
-                await navigator.mediaDevices.getUserMedia({ video: true }); // Pide permiso primero
+                await navigator.mediaDevices.getUserMedia({ video: true });
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoDevices = devices.filter(device => device.kind === 'videoinput');
 
                 console.log("Cámaras encontradas:", videoDevices);
 
                 let selectedDeviceId;
-                if (videoDevices.length === 0) {
-                    throw new Error("No se encontraron cámaras.");
-                } else if (videoDevices.length === 1) {
-                    selectedDeviceId = videoDevices[0].deviceId;
-                    console.log("Solo se encontró una cámara, se usará esa:", videoDevices[0].label);
-                } else {
-                    // Intenta encontrar una que no sea la integrada
-                    const externalCam = videoDevices.find(device => 
-                        !/integrated|facetime|built-in/i.test(device.label)
-                    );
-                    
-                    if (externalCam) {
-                        selectedDeviceId = externalCam.deviceId;
-                        console.log("Se encontró una cámara que parece externa:", externalCam.label);
-                    } else {
-                        // Si no, usa la última de la lista
-                        selectedDeviceId = videoDevices[videoDevices.length - 1].deviceId;
-                        console.log("No se pudo adivinar la cámara externa, se usará la última de la lista:", videoDevices[videoDevices.length - 1].label);
-                    }
-                }
+                if (videoDevices.length === 0) throw new Error("No se encontraron cámaras.");
                 
-                statusDiv.innerText = "Cámara encontrada. Iniciando video...";
-                // --- Fin de la lógica de selección ---
-
+                const externalCam = videoDevices.find(d => !/integrated|facetime|built-in/i.test(d.label));
+                selectedDeviceId = externalCam ? externalCam.deviceId : videoDevices[videoDevices.length - 1].deviceId;
+                
+                const selectedLabel = videoDevices.find(d => d.deviceId === selectedDeviceId).label;
+                console.log("Cámara seleccionada automáticamente:", selectedLabel);
+                updateStatus(`Usando cámara: ${selectedLabel}`);
+                
                 const flip = true;
                 const width = 400;
                 const height = 400;
@@ -98,8 +92,9 @@
                 await webcam.setup({ deviceId: selectedDeviceId });
                 await webcam.play();
                 
-                document.getElementById("webcam-container").appendChild(webcam.canvas);
-                statusDiv.innerText = "¡Listo! Analizando...";
+                const webcamContainer = document.getElementById("webcam-container");
+                webcamContainer.appendChild(webcam.canvas);
+                updateStatus("¡Listo! Analizando...");
 
                 labelContainer = document.getElementById("label-container");
                 for (let i = 0; i < model.getTotalClasses(); i++) {
@@ -110,21 +105,24 @@
 
             } catch (error) {
                 console.error("Ocurrió un error en la inicialización:", error);
-                statusDiv.innerText = "Error: " + error.message;
+                updateStatus("Error: " + error.message);
             }
         }
 
         async function loop() {
-            webcam.update(); // Actualiza el frame del canvas
-            const prediction = await model.predict(webcam.canvas);
-            for (let i = 0; i < model.getTotalClasses(); i++) {
-                const classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
-                labelContainer.childNodes[i].innerHTML = classPrediction;
+            if (webcam && webcam.canvas) {
+                webcam.update();
+                const prediction = await model.predict(webcam.canvas);
+                for (let i = 0; i < model.getTotalClasses(); i++) {
+                    const classPrediction = `${prediction[i].className}: ${prediction[i].probability.toFixed(2)}`;
+                    if (labelContainer.childNodes[i]) {
+                        labelContainer.childNodes[i].innerHTML = classPrediction;
+                    }
+                }
             }
             window.requestAnimationFrame(loop);
         }
 
-        // Inicia todo al cargar la página
         init();
     </script>
 </body>
