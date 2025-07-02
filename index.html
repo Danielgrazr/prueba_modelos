@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clasificador Automático</title>
+    <title>Clasificador Múltiple</title>
     <style>
         body {
             font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
@@ -15,6 +15,31 @@
             margin: 0;
             background-color: #f7f7f7;
             color: #333;
+        }
+        .controls {
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px; /* Espacio entre el menú y el botón */
+        }
+        #model-selector {
+            padding: 8px;
+            font-size: 1em;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        #load-model-btn {
+            padding: 8px 15px;
+            font-size: 1em;
+            font-weight: bold;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #load-model-btn:hover {
+            background-color: #0056b3;
         }
         #status {
             margin-bottom: 20px;
@@ -29,7 +54,7 @@
             margin-bottom: 20px;
         }
         #label-container {
-            font-size: 2em; /* Hacemos el texto del resultado más grande */
+            font-size: 2em;
             font-weight: bold;
             text-align: center;
             color: #0056b3;
@@ -39,89 +64,128 @@
 </head>
 <body>
 
-    <h1>Clasificador Automático</h1>
+    <h1>Prueba de Modelos</h1>
 
-    <div id="status">Cargando...</div>
+    <div class="controls">
+        <select id="model-selector"></select>
+        <button id="load-model-btn">Cargar Modelo</button>
+    </div>
+
+    <div id="status">Selecciona un modelo y presiona "Cargar"</div>
     <div id="webcam-container"></div>
-    <div id="label-container"></div> <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <div id="label-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
 
     <script type="text/javascript">
-        const URL = "./lado ds/"; // Asegúrate que esta ruta sea correcta
+        // ⭐ PASO 1: Define aquí todos tus modelos.
+        // El nombre que pongas a la izquierda es lo que se verá en el menú.
+        // La ruta de la derecha es la carpeta donde está el model.json
+        const MODELS = {
+            "Lado Dragon Shield": "./modelos/lado ds/",
+            "Clasificador MMC3": "./modelos/mmc3/"
+            // Agrega más modelos aquí si es necesario
+        };
 
         let model, webcam, labelContainer;
-        
-        function updateStatus(message) {
-            const statusDiv = document.getElementById("status");
-            if (statusDiv) statusDiv.innerText = message;
+        let isLoopRunning = false;
+
+        // --- Funciones de la Interfaz ---
+        function populateModelSelector() {
+            const selector = document.getElementById("model-selector");
+            for (const name in MODELS) {
+                const option = document.createElement("option");
+                option.value = name;
+                option.innerText = name;
+                selector.appendChild(option);
+            }
         }
 
-        async function init() {
-            updateStatus("Cargando modelo y buscando cámara...");
-            const modelURL = URL + "model.json";
-            const metadataURL = URL + "metadata.json";
+        function updateStatus(message) {
+            document.getElementById("status").innerText = message;
+        }
+
+        // --- Lógica Principal ---
+
+        // Esta función se encarga de cargar el modelo seleccionado.
+        async function loadSelectedModel() {
+            const selector = document.getElementById("model-selector");
+            const selectedModelName = selector.value;
+            const modelPath = MODELS[selectedModelName];
+
+            updateStatus(`Cargando ${selectedModelName}...`);
+            model = null; // Limpiamos el modelo anterior
 
             try {
+                const modelURL = modelPath + "model.json";
+                const metadataURL = modelPath + "metadata.json";
                 model = await tmImage.load(modelURL, metadataURL);
-                updateStatus("Modelo cargado. Buscando cámaras...");
-
+                updateStatus(`¡Listo! Usando ${selectedModelName}.`);
+                
+                // Si el bucle de predicción no está corriendo, lo iniciamos.
+                if (!isLoopRunning) {
+                    isLoopRunning = true;
+                    window.requestAnimationFrame(loop);
+                }
+            } catch (error) {
+                console.error("Error al cargar el modelo:", error);
+                updateStatus(`Error al cargar ${selectedModelName}.`);
+                model = null; // Nos aseguramos que no quede un modelo a medio cargar
+            }
+        }
+        
+        // Esta función solo inicializa la cámara una vez.
+        async function setupWebcam() {
+            updateStatus("Iniciando cámara...");
+            try {
                 await navigator.mediaDevices.getUserMedia({ video: true });
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoDevices = devices.filter(device => device.kind === 'videoinput');
-
-                let selectedDeviceId;
                 if (videoDevices.length === 0) throw new Error("No se encontraron cámaras.");
-                
+
                 const externalCam = videoDevices.find(d => !/integrated|facetime|built-in/i.test(d.label));
-                selectedDeviceId = externalCam ? externalCam.deviceId : videoDevices[videoDevices.length - 1].deviceId;
+                const selectedDeviceId = externalCam ? externalCam.deviceId : videoDevices[videoDevices.length - 1].deviceId;
                 
-                const selectedLabel = videoDevices.find(d => d.deviceId === selectedDeviceId).label;
-                updateStatus(`Usando cámara: ${selectedLabel}`);
-                
-                // --- CAMBIO 1: Modo espejo desactivado ---
-                const flip = false; 
-                const width = 400;
-                const height = 400;
-                
-                webcam = new tmImage.Webcam(width, height, flip);
+                webcam = new tmImage.Webcam(400, 400, false); // flip = false
                 await webcam.setup({ deviceId: selectedDeviceId });
                 await webcam.play();
-                
                 document.getElementById("webcam-container").appendChild(webcam.canvas);
-                labelContainer = document.getElementById("label-container");
-                updateStatus("¡Listo! Analizando...");
-                
-                window.requestAnimationFrame(loop);
-
+                updateStatus("Cámara lista. Selecciona un modelo.");
             } catch (error) {
-                console.error("Ocurrió un error en la inicialización:", error);
-                updateStatus("Error: " + error.message);
+                console.error("Error al iniciar la cámara:", error);
+                updateStatus("Error al iniciar la cámara: " + error.message);
             }
         }
 
+        // El bucle de predicción. Solo hace algo si hay un modelo cargado.
         async function loop() {
             if (webcam && webcam.canvas) {
                 webcam.update();
-                const prediction = await model.predict(webcam.canvas);
                 
-                // --- CAMBIO 2: Lógica para mostrar solo la clase dominante ---
-                let maxProbability = 0;
-                let dominantClass = "";
-
-                for (let i = 0; i < prediction.length; i++) {
-                    if (prediction[i].probability > maxProbability) {
-                        maxProbability = prediction[i].probability;
-                        dominantClass = prediction[i].className;
+                if (model) {
+                    const prediction = await model.predict(webcam.canvas);
+                    let maxProbability = 0;
+                    let dominantClass = "";
+                    for (let i = 0; i < prediction.length; i++) {
+                        if (prediction[i].probability > maxProbability) {
+                            maxProbability = prediction[i].probability;
+                            dominantClass = prediction[i].className;
+                        }
                     }
+                    if (labelContainer) labelContainer.innerHTML = dominantClass;
                 }
-                
-                // Muestra solo el nombre de la clase con mayor probabilidad
-                if (labelContainer) {
-                    labelContainer.innerHTML = dominantClass;
-                }
-                // --- Fin del cambio 2 ---
             }
+            // Mantenemos el bucle corriendo para estar listos si se carga otro modelo
             window.requestAnimationFrame(loop);
+        }
+
+        // --- Inicialización de la Página ---
+        function init() {
+            populateModelSelector();
+            labelContainer = document.getElementById("label-container");
+            document.getElementById("load-model-btn").addEventListener("click", loadSelectedModel);
+            setupWebcam();
         }
 
         init();
