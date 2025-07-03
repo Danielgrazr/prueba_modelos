@@ -82,4 +82,122 @@
         // Define aquí todos tus modelos.
         const MODELS = {
             "Lado Dragon Shield": "./modelos/lado ds/",
-            "Clasificador
+            "Clasificador MMC3": "./modelos/mmc3/"
+            // Agrega más modelos aquí si es necesario
+        };
+        
+        // Mapa para traducir abreviaturas a nombres completos (puedes llenarlo si lo necesitas)
+        const NOMBRES_CLASES = {
+            // "abrev_clase_1": "Nombre Completo 1",
+            // "abrev_clase_2": "Nombre Completo 2"
+        };
+
+        let model, webcam, labelContainer;
+        let isLoopRunning = false;
+
+        // --- Funciones de la Interfaz ---
+        function populateModelSelector() {
+            const selector = document.getElementById("model-selector");
+            for (const name in MODELS) {
+                const option = document.createElement("option");
+                option.value = name;
+                option.innerText = name;
+                selector.appendChild(option);
+            }
+        }
+
+        function updateStatus(message) {
+            document.getElementById("status").innerText = message;
+        }
+
+        // --- Lógica Principal ---
+
+        // Esta función se encarga de cargar el modelo seleccionado.
+        async function loadSelectedModel() {
+            const selector = document.getElementById("model-selector");
+            const selectedModelName = selector.value;
+            const modelPath = MODELS[selectedModelName];
+
+            updateStatus(`Cargando ${selectedModelName}...`);
+            model = null; // Limpiamos el modelo anterior
+
+            try {
+                const modelURL = modelPath + "model.json";
+                
+                // --- CÓDIGO CORREGIDO ---
+                // Se eliminó la variable 'metadataURL' que no estaba definida y causaba el error.
+                model = await tmImage.load(modelURL);
+
+                updateStatus(`¡Listo! Usando ${selectedModelName}.`);
+                
+                if (!isLoopRunning) {
+                    isLoopRunning = true;
+                    window.requestAnimationFrame(loop);
+                }
+            } catch (error) {
+                console.error("Error al cargar el modelo:", error);
+                updateStatus(`Error al cargar ${selectedModelName}.`);
+                model = null;
+            }
+        }
+        
+        // Esta función solo inicializa la cámara una vez.
+        async function setupWebcam() {
+            updateStatus("Iniciando cámara...");
+            try {
+                await navigator.mediaDevices.getUserMedia({ video: true });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                if (videoDevices.length === 0) throw new Error("No se encontraron cámaras.");
+
+                const externalCam = videoDevices.find(d => !/integrated|facetime|built-in/i.test(d.label));
+                const selectedDeviceId = externalCam ? externalCam.deviceId : videoDevices[videoDevices.length - 1].deviceId;
+                
+                webcam = new tmImage.Webcam(400, 400, false); // flip = false
+                await webcam.setup({ deviceId: selectedDeviceId });
+                await webcam.play();
+                document.getElementById("webcam-container").appendChild(webcam.canvas);
+                updateStatus("Cámara lista. Selecciona un modelo.");
+            } catch (error) {
+                console.error("Error al iniciar la cámara:", error);
+                updateStatus("Error al iniciar la cámara: " + error.message);
+            }
+        }
+
+        // El bucle de predicción. Solo hace algo si hay un modelo cargado.
+        async function loop() {
+            if (webcam && webcam.canvas) {
+                webcam.update();
+                
+                if (model) {
+                    const prediction = await model.predict(webcam.canvas);
+                    let maxProbability = 0;
+                    let dominantClass = "";
+                    for (let i = 0; i < prediction.length; i++) {
+                        if (prediction[i].probability > maxProbability) {
+                            maxProbability = prediction[i].probability;
+                            dominantClass = prediction[i].className;
+                        }
+                    }
+                    if (labelContainer) {
+                         // Busca la abreviatura en tu mapa. Si no la encuentra, usa la abreviatura original.
+                        const nombreCompleto = NOMBRES_CLASES[dominantClass] || dominantClass;
+                        labelContainer.innerHTML = nombreCompleto;
+                    }
+                }
+            }
+            window.requestAnimationFrame(loop);
+        }
+
+        // --- Inicialización de la Página ---
+        function init() {
+            populateModelSelector();
+            labelContainer = document.getElementById("label-container");
+            document.getElementById("load-model-btn").addEventListener("click", loadSelectedModel);
+            setupWebcam();
+        }
+
+        init();
+    </script>
+</body>
+</html>
