@@ -119,7 +119,6 @@
 
             try {
                 const modelURL = modelPath + "model.json";
-                const metadataURL = modelPath + "metadata.json";
                 model = await tmImage.load(modelURL, metadataURL);
                 updateStatus(`¡Listo! Usando ${selectedModelName}.`);
                 
