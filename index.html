@@ -67,6 +67,7 @@
             });
 
             const predictions = await model.executeAsync(input);
+            console.log("Salida cruda del modelo:", predictions);
             const [boxes, scores, classes] = predictions.slice(0, 3);
 
             const boxes_data = boxes.dataSync();
