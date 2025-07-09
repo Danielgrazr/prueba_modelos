@@ -57,7 +57,6 @@
             }
         }
 
-        // ▼▼▼ FUNCIÓN DE DETECCIÓN CORREGIDA ▼▼▼
         async function detectFrame() {
             if (!model) return;
 
@@ -69,10 +68,8 @@
 
             const predictions = await model.executeAsync(input);
             
-            // Llama a la nueva función para procesar la salida
             const [boxes, scores, classes] = aplanarYProcesarSalida(predictions);
             
-            // Dibuja las predicciones filtradas
             renderPredictions(boxes, scores, classes);
             
             tf.dispose([input, predictions]);
@@ -81,7 +78,6 @@
             requestAnimationFrame(detectFrame);
         }
 
-        // ▼▼▼ FUNCIÓN DE DIBUJO CORREGIDA ▼▼▼
         function renderPredictions(boxes, scores, classes) {
             ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
             
@@ -91,59 +87,51 @@
 
             for (let i = 0; i < scores.length; ++i) {
                 const score = scores[i];
-                if (score < 0.5) continue; // Umbral de confianza
+                if (score < 0.5) continue; 
 
                 const klass = classNames[classes[i]];
-                // Las coordenadas ya vienen procesadas como [x1, y1, x2, y2]
                 const [x1, y1, x2, y2] = boxes[i];
                 const width = x2 - x1;
                 const height = y2 - y1;
 
-                // Dibuja la caja
-                ctx.strokeStyle = "#00FF00"; // Color verde
+                ctx.strokeStyle = "#00FF00";
                 ctx.lineWidth = 4;
                 ctx.strokeRect(x1, y1, width, height);
 
-                // Dibuja el fondo de la etiqueta
                 const textWidth = ctx.measureText(klass + " - " + (score * 100).toFixed(1) + "%").width;
                 const textHeight = parseInt(font, 10);
                 ctx.fillStyle = "#00FF00";
                 ctx.fillRect(x1 - 2, y1 - (textHeight + 4), textWidth + 4, textHeight + 4);
                 
-                // Dibuja el texto
                 ctx.fillStyle = "#000000";
                 ctx.fillText(klass + " - " + (score * 100).toFixed(1) + "%", x1, y1 - textHeight - 2);
             }
         }
 
-        // ▼▼▼ NUEVA FUNCIÓN DE AYUDA PARA PROCESAR LA SALIDA ▼▼▼
         function aplanarYProcesarSalida(predictions) {
-            const confidenceThreshold = 0.5; // Umbral de confianza
-            const [raw, ] = predictions; // La salida del modelo es un array con un solo tensor
-            const data = raw.squeeze(0).transpose().dataSync(); // Shape: [8400, 6]
+            const confidenceThreshold = 0.5;
+            
+            // --- ESTA ES LA LÍNEA CORREGIDA ---
+            // El resultado 'predictions' ES el tensor, no un array que lo contiene.
+            const raw = predictions; 
+            
+            const data = raw.squeeze(0).transpose().dataSync();
             
             const boxes = [];
             const scores = [];
             const classes = [];
 
-            // Recorre las 8400 posibles detecciones
             for (let i = 0; i < 8400; ++i) {
-                const score = data[i * 6 + 4]; // La puntuación de confianza está en la 5ª posición
-
-                // Ignora las detecciones con baja confianza
+                const score = data[i * 6 + 4];
                 if (score < confidenceThreshold) {
                     continue;
                 }
 
-                const classId = data[i * 6 + 5]; // El ID de la clase está en la 6ª posición
-                
-                // Coordenadas del centro (cx, cy) y dimensiones (w, h)
+                const classId = data[i * 6 + 5];
                 const cx = data[i * 6 + 0];
                 const cy = data[i * 6 + 1];
                 const w = data[i * 6 + 2];
                 const h = data[i * 6 + 3];
-
-                // Convierte las coordenadas a (x1, y1, x2, y2)
                 const x1 = cx - w / 2;
                 const y1 = cy - h / 2;
                 const x2 = cx + w / 2;
@@ -154,8 +142,6 @@
                 classes.push(classId);
             }
             
-            // Esta implementación simple no usa Non-Maximum Suppression por simplicidad,
-            // pero es suficiente para empezar a visualizar los resultados.
             return [boxes, scores, classes];
         }
 
