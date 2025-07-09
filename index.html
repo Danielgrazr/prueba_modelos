@@ -28,12 +28,13 @@
         const ctx = canvas.getContext('2d');
         const statusDiv = document.getElementById('status');
         
-        // ⚠️ REEMPLAZA ESTAS RUTAS Y NOMBRES
+        // ⚠️ REEMPLAZA ESTA RUTA SI ES NECESARIO
         const modelPath = '/prueba_modelos/modelos/mmc3/model.json';
-        // Esta es la lista de clases EN EL ORDEN EXACTO que usó YOLOv8.
-        // La puedes encontrar en tu archivo data.yaml
+        
+        // ⚠️ COMPLETA ESTA LISTA CON TUS 36 CLASES EN EL ORDEN CORRECTO
         const classNames = [
-            '3300 SIGNAL DUO (129.0466-PP,GRIS-TPE,ROJO) CON COSTILLA', '3300 SIGNAL DUO (129.0472-PP,GRIS-TPE,MAGENTA) CON COSTILLA'
+            '3300 SIGNAL DUO (129.0466-PP,GRIS-TPE,ROJO) CON COSTILLA', 
+            '3300 SIGNAL DUO (129.0472-PP,GRIS-TPE,MAGENTA) CON COSTILLA'
             // ... y así para tus 36 clases
         ];
 
@@ -56,26 +57,23 @@
             }
         }
 
+        // ▼▼▼ FUNCIÓN DE DETECCIÓN CORREGIDA ▼▼▼
         async function detectFrame() {
             if (!model) return;
 
             tf.engine().startScope();
             const input = tf.tidy(() => {
                 const img = tf.browser.fromPixels(video);
-                // Redimensiona y normaliza la imagen a [0,1]
                 return tf.image.resizeBilinear(img, [640, 640]).div(255.0).expandDims(0);
             });
 
             const predictions = await model.executeAsync(input);
-            console.log("Salida cruda del modelo:", predictions);
-            const [boxes, scores, classes] = predictions.slice(0, 3);
-
-            const boxes_data = boxes.dataSync();
-            const scores_data = scores.dataSync();
-            const classes_data = classes.dataSync();
             
-            // Dibuja los resultados
-            renderPredictions(boxes_data, scores_data, classes_data);
+            // Llama a la nueva función para procesar la salida
+            const [boxes, scores, classes] = aplanarYProcesarSalida(predictions);
+            
+            // Dibuja las predicciones filtradas
+            renderPredictions(boxes, scores, classes);
             
             tf.dispose([input, predictions]);
             tf.engine().endScope();
@@ -83,6 +81,7 @@
             requestAnimationFrame(detectFrame);
         }
 
+        // ▼▼▼ FUNCIÓN DE DIBUJO CORREGIDA ▼▼▼
         function renderPredictions(boxes, scores, classes) {
             ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
             
@@ -95,27 +94,71 @@
                 if (score < 0.5) continue; // Umbral de confianza
 
                 const klass = classNames[classes[i]];
-                const [x1, y1, x2, y2] = boxes.slice(i * 4, (i + 1) * 4);
-                
+                // Las coordenadas ya vienen procesadas como [x1, y1, x2, y2]
+                const [x1, y1, x2, y2] = boxes[i];
                 const width = x2 - x1;
                 const height = y2 - y1;
 
                 // Dibuja la caja
                 ctx.strokeStyle = "#00FF00"; // Color verde
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 4;
                 ctx.strokeRect(x1, y1, width, height);
 
                 // Dibuja el fondo de la etiqueta
                 const textWidth = ctx.measureText(klass + " - " + (score * 100).toFixed(1) + "%").width;
                 const textHeight = parseInt(font, 10);
                 ctx.fillStyle = "#00FF00";
-                ctx.fillRect(x1 -1, y1 - (textHeight + 2), textWidth + 4, textHeight + 4);
+                ctx.fillRect(x1 - 2, y1 - (textHeight + 4), textWidth + 4, textHeight + 4);
                 
                 // Dibuja el texto
                 ctx.fillStyle = "#000000";
-                ctx.fillText(klass + " - " + (score * 100).toFixed(1) + "%", x1 + 1, y1 - (textHeight));
+                ctx.fillText(klass + " - " + (score * 100).toFixed(1) + "%", x1, y1 - textHeight - 2);
             }
         }
+
+        // ▼▼▼ NUEVA FUNCIÓN DE AYUDA PARA PROCESAR LA SALIDA ▼▼▼
+        function aplanarYProcesarSalida(predictions) {
+            const confidenceThreshold = 0.5; // Umbral de confianza
+            const [raw, ] = predictions; // La salida del modelo es un array con un solo tensor
+            const data = raw.squeeze(0).transpose().dataSync(); // Shape: [8400, 6]
+            
+            const boxes = [];
+            const scores = [];
+            const classes = [];
+
+            // Recorre las 8400 posibles detecciones
+            for (let i = 0; i < 8400; ++i) {
+                const score = data[i * 6 + 4]; // La puntuación de confianza está en la 5ª posición
+
+                // Ignora las detecciones con baja confianza
+                if (score < confidenceThreshold) {
+                    continue;
+                }
+
+                const classId = data[i * 6 + 5]; // El ID de la clase está en la 6ª posición
+                
+                // Coordenadas del centro (cx, cy) y dimensiones (w, h)
+                const cx = data[i * 6 + 0];
+                const cy = data[i * 6 + 1];
+                const w = data[i * 6 + 2];
+                const h = data[i * 6 + 3];
+
+                // Convierte las coordenadas a (x1, y1, x2, y2)
+                const x1 = cx - w / 2;
+                const y1 = cy - h / 2;
+                const x2 = cx + w / 2;
+                const y2 = cy + h / 2;
+                
+                boxes.push([x1, y1, x2, y2]);
+                scores.push(score);
+                classes.push(classId);
+            }
+            
+            // Esta implementación simple no usa Non-Maximum Suppression por simplicidad,
+            // pero es suficiente para empezar a visualizar los resultados.
+            return [boxes, scores, classes];
+        }
+
 
         async function main() {
             await setupCamera();
