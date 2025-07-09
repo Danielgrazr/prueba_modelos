@@ -3,165 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detector de Objetos YOLOv8</title>
+    <title>Prueba de Cámara</title>
     <style>
-        body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; margin: 0; background-color: #f0f0f0; }
-        h1 { color: #333; }
-        #status { margin: 15px; font-size: 1.1em; color: #555; }
-        .container { position: relative; }
-        canvas { position: absolute; top: 0; left: 0; }
+        body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f0f0f0; }
+        #status { font-size: 1.5em; font-weight: bold; padding: 20px; border-radius: 8px; }
+        .success { color: #28a745; background-color: #e9f7ec; }
+        .error { color: #dc3545; background-color: #f8d7da; }
     </style>
 </head>
 <body>
-    <h1>Detector de Objetos YOLOv8</h1>
-    <div id="status">Cargando modelo...</div>
-    <div class="container">
-        <video id="webcam" autoplay muted playsinline width="640" height="640"></video>
-        <canvas id="canvas" width="640" height="640"></canvas>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <h1>Prueba de Diagnóstico de Cámara</h1>
+    <video id="webcam" autoplay muted playsinline width="500" style="border: 2px solid black;"></video>
+    <div id="status">Intentando acceder a la cámara...</div>
 
     <script>
         const video = document.getElementById('webcam');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
         const statusDiv = document.getElementById('status');
-        
-        // ⚠️ REEMPLAZA ESTA RUTA SI ES NECESARIO
-        const modelPath = '/prueba_modelos/modelos/mmc3/model.json';
-        
-        // ⚠️ COMPLETA ESTA LISTA CON TUS 36 CLASES EN EL ORDEN CORRECTO
-        const classNames = [
-            '3300 SIGNAL DUO (129.0466-PP,GRIS-TPE,ROJO) CON COSTILLA', 
-            '3300 SIGNAL DUO (129.0472-PP,GRIS-TPE,MAGENTA) CON COSTILLA'
-            // ... y así para tus 36 clases
-        ];
 
-        let model;
-
-        async function setupCamera() {
+        async function testCamera() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 640, height: 640 } 
-                });
+                // Pedimos el video de la forma más genérica posible
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
                 video.srcObject = stream;
-                return new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        resolve(video);
-                    };
-                });
+                statusDiv.innerText = '¡ÉXITO! La cámara está funcionando.';
+                statusDiv.className = 'success';
             } catch (error) {
-                statusDiv.innerHTML = "Error al acceder a la cámara. Por favor, otorga los permisos.";
-                console.error(error);
+                // Mostramos el nombre del error directamente en la página
+                statusDiv.innerText = 'ERROR: ' + error.name;
+                statusDiv.className = 'error';
+                console.error("Error detallado de la cámara:", error);
             }
         }
-
-        async function detectFrame() {
-            if (!model) return;
-
-            tf.engine().startScope();
-            const input = tf.tidy(() => {
-                const img = tf.browser.fromPixels(video);
-                return tf.image.resizeBilinear(img, [640, 640]).div(255.0).expandDims(0);
-            });
-
-            const predictions = await model.executeAsync(input);
-            
-            const [boxes, scores, classes] = aplanarYProcesarSalida(predictions);
-            
-            renderPredictions(boxes, scores, classes);
-            
-            tf.dispose([input, predictions]);
-            tf.engine().endScope();
-            
-            requestAnimationFrame(detectFrame);
-        }
-
-        function renderPredictions(boxes, scores, classes) {
-            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-            
-            const font = "16px sans-serif";
-            ctx.font = font;
-            ctx.textBaseline = "top";
-
-            for (let i = 0; i < scores.length; ++i) {
-                const score = scores[i];
-                if (score < 0.5) continue; 
-
-                const klass = classNames[classes[i]];
-                const [x1, y1, x2, y2] = boxes[i];
-                const width = x2 - x1;
-                const height = y2 - y1;
-
-                ctx.strokeStyle = "#00FF00";
-                ctx.lineWidth = 4;
-                ctx.strokeRect(x1, y1, width, height);
-
-                const textWidth = ctx.measureText(klass + " - " + (score * 100).toFixed(1) + "%").width;
-                const textHeight = parseInt(font, 10);
-                ctx.fillStyle = "#00FF00";
-                ctx.fillRect(x1 - 2, y1 - (textHeight + 4), textWidth + 4, textHeight + 4);
-                
-                ctx.fillStyle = "#000000";
-                ctx.fillText(klass + " - " + (score * 100).toFixed(1) + "%", x1, y1 - textHeight - 2);
-            }
-        }
-
-        function aplanarYProcesarSalida(predictions) {
-            const confidenceThreshold = 0.5;
-            
-            // --- ESTA ES LA LÍNEA CORREGIDA ---
-            // El resultado 'predictions' ES el tensor, no un array que lo contiene.
-            const raw = predictions; 
-            
-            const data = raw.squeeze(0).transpose().dataSync();
-            
-            const boxes = [];
-            const scores = [];
-            const classes = [];
-
-            for (let i = 0; i < 8400; ++i) {
-                const score = data[i * 6 + 4];
-                if (score < confidenceThreshold) {
-                    continue;
-                }
-
-                const classId = data[i * 6 + 5];
-                const cx = data[i * 6 + 0];
-                const cy = data[i * 6 + 1];
-                const w = data[i * 6 + 2];
-                const h = data[i * 6 + 3];
-                const x1 = cx - w / 2;
-                const y1 = cy - h / 2;
-                const x2 = cx + w / 2;
-                const y2 = cy + h / 2;
-                
-                boxes.push([x1, y1, x2, y2]);
-                scores.push(score);
-                classes.push(classId);
-            }
-            
-            return [boxes, scores, classes];
-        }
-
-
-        async function main() {
-            await setupCamera();
-            video.play();
-            statusDiv.innerHTML = 'Cargando modelo...';
-            
-            try {
-                model = await tf.loadGraphModel(modelPath);
-                statusDiv.innerHTML = '¡Modelo cargado! Detectando...';
-                detectFrame();
-            } catch(error) {
-                statusDiv.innerHTML = 'Error al cargar el modelo. Revisa la ruta y la consola (F12).';
-                console.error(error);
-            }
-        }
-
-        main();
+        testCamera();
     </script>
 </body>
 </html>
