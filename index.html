@@ -3,148 +3,135 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clasificador Múltiple</title>
+    <title>Detector de Objetos YOLOv8</title>
     <style>
-        body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f7f7f7; color: #333; }
-        .controls { margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
-        #model-selector { padding: 8px; font-size: 1em; border-radius: 5px; border: 1px solid #ccc; }
-        #load-model-btn { padding: 8px 15px; font-size: 1em; font-weight: bold; color: white; background-color: #007bff; border: none; border-radius: 5px; cursor: pointer; }
-        #load-model-btn:hover { background-color: #0056b3; }
-        #status { margin-bottom: 20px; font-size: 1.1em; color: #555; min-height: 1.2em; }
-        #webcam-container { border: 2px solid #ddd; border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
-        #label-container { font-size: 2em; font-weight: bold; text-align: center; color: #0056b3; min-height: 1.5em; }
+        body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; margin: 0; background-color: #f0f0f0; }
+        h1 { color: #333; }
+        #status { margin: 15px; font-size: 1.1em; color: #555; }
+        .container { position: relative; }
+        canvas { position: absolute; top: 0; left: 0; }
     </style>
 </head>
 <body>
-
-    <h1>Prueba de Modelos</h1>
-    <div class="controls">
-        <select id="model-selector"></select>
-        <button id="load-model-btn">Cargar Modelo</button>
+    <h1>Detector de Objetos YOLOv8</h1>
+    <div id="status">Cargando modelo...</div>
+    <div class="container">
+        <video id="webcam" autoplay muted playsinline width="640" height="640"></video>
+        <canvas id="canvas" width="640" height="640"></canvas>
     </div>
-    <div id="status">Selecciona un modelo y presiona "Cargar"</div>
-    <div id="webcam-container"></div>
-    <div id="label-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
 
-    <script type="text/javascript">
-        const MODELS = {
-            "Lado Dragon Shield": { 
-                path: "/prueba_modelos/modelos/lado ds/", 
-                type: "tm" // Modelo de Teachable Machine
-            },
-            "Clasificador MMC3": { 
-                path: "/prueba_modelos/modelos/mmc3/", 
-                type: "tm" // Modelo entrenado en Colab
-            }
-        };
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
         
-        const NOMBRES_CLASES = { /* Tu mapa de traducción puede ir aquí */ };
+        // ⚠️ REEMPLAZA ESTAS RUTAS Y NOMBRES
+        const modelPath = '/prueba_modelos/modelos/mmc3/model.json';
+        // Esta es la lista de clases EN EL ORDEN EXACTO que usó YOLOv8.
+        // La puedes encontrar en tu archivo data.yaml
+        const classNames = [
+            '3300 SIGNAL DUO (129.0466-PP,GRIS-TPE,ROJO) CON COSTILLA', '3300 SIGNAL DUO (129.0472-PP,GRIS-TPE,MAGENTA) CON COSTILLA'
+            // ... y así para tus 36 clases
+        ];
 
-        let model, webcam, labelContainer;
-        let isLoopRunning = false;
+        let model;
 
-        function populateModelSelector() {
-            const selector = document.getElementById("model-selector");
-            for (const name in MODELS) {
-                const option = document.createElement("option");
-                option.value = name;
-                option.innerText = name;
-                selector.appendChild(option);
-            }
-        }
-
-        function updateStatus(message) {
-            document.getElementById("status").innerText = message;
-        }
-
-        async function loadSelectedModel() {
-            const selector = document.getElementById("model-selector");
-            const selectedModelName = selector.value;
-            const modelInfo = MODELS[selectedModelName];
-            const modelPath = modelInfo.path;
-
-            updateStatus(`Cargando ${selectedModelName}...`);
-            model = null;
-
+        async function setupCamera() {
             try {
-                const modelURL = modelPath + "model.json";
-
-                if (modelInfo.type === "tm") {
-                    const metadataURL = modelPath + "metadata.json";
-                    model = await tmImage.load(modelURL, metadataURL);
-                } else {
-                    model = await tmImage.load(modelURL);
-                }
-
-                updateStatus(`¡Listo! Usando ${selectedModelName}.`);
-                
-                if (!isLoopRunning) {
-                    isLoopRunning = true;
-                    window.requestAnimationFrame(loop);
-                }
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 640 } 
+                });
+                video.srcObject = stream;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        resolve(video);
+                    };
+                });
             } catch (error) {
-                console.error("Error al cargar el modelo:", error);
-                updateStatus(`Error al cargar ${selectedModelName}.`);
-                model = null;
+                statusDiv.innerHTML = "Error al acceder a la cámara. Por favor, otorga los permisos.";
+                console.error(error);
             }
         }
-        
-        async function setupWebcam() {
-            updateStatus("Iniciando cámara...");
+
+        async function detectFrame() {
+            if (!model) return;
+
+            tf.engine().startScope();
+            const input = tf.tidy(() => {
+                const img = tf.browser.fromPixels(video);
+                // Redimensiona y normaliza la imagen a [0,1]
+                return tf.image.resizeBilinear(img, [640, 640]).div(255.0).expandDims(0);
+            });
+
+            const predictions = await model.executeAsync(input);
+            const [boxes, scores, classes] = predictions.slice(0, 3);
+
+            const boxes_data = boxes.dataSync();
+            const scores_data = scores.dataSync();
+            const classes_data = classes.dataSync();
+            
+            // Dibuja los resultados
+            renderPredictions(boxes_data, scores_data, classes_data);
+            
+            tf.dispose([input, predictions]);
+            tf.engine().endScope();
+            
+            requestAnimationFrame(detectFrame);
+        }
+
+        function renderPredictions(boxes, scores, classes) {
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            
+            const font = "16px sans-serif";
+            ctx.font = font;
+            ctx.textBaseline = "top";
+
+            for (let i = 0; i < scores.length; ++i) {
+                const score = scores[i];
+                if (score < 0.5) continue; // Umbral de confianza
+
+                const klass = classNames[classes[i]];
+                const [x1, y1, x2, y2] = boxes.slice(i * 4, (i + 1) * 4);
+                
+                const width = x2 - x1;
+                const height = y2 - y1;
+
+                // Dibuja la caja
+                ctx.strokeStyle = "#00FF00"; // Color verde
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x1, y1, width, height);
+
+                // Dibuja el fondo de la etiqueta
+                const textWidth = ctx.measureText(klass + " - " + (score * 100).toFixed(1) + "%").width;
+                const textHeight = parseInt(font, 10);
+                ctx.fillStyle = "#00FF00";
+                ctx.fillRect(x1 -1, y1 - (textHeight + 2), textWidth + 4, textHeight + 4);
+                
+                // Dibuja el texto
+                ctx.fillStyle = "#000000";
+                ctx.fillText(klass + " - " + (score * 100).toFixed(1) + "%", x1 + 1, y1 - (textHeight));
+            }
+        }
+
+        async function main() {
+            await setupCamera();
+            video.play();
+            statusDiv.innerHTML = 'Cargando modelo...';
+            
             try {
-                await navigator.mediaDevices.getUserMedia({ video: true });
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                if (videoDevices.length === 0) throw new Error("No se encontraron cámaras.");
-
-                const externalCam = videoDevices.find(d => !/integrated|facetime|built-in/i.test(d.label));
-                const selectedDeviceId = externalCam ? externalCam.deviceId : videoDevices[videoDevices.length - 1].deviceId;
-                
-                webcam = new tmImage.Webcam(400, 400, false);
-                await webcam.setup({ deviceId: selectedDeviceId });
-                await webcam.play();
-                document.getElementById("webcam-container").appendChild(webcam.canvas);
-                updateStatus("Cámara lista. Selecciona un modelo.");
-            } catch (error) {
-                console.error("Error al iniciar la cámara:", error);
-                updateStatus("Error al iniciar la cámara: " + error.message);
+                model = await tf.loadGraphModel(modelPath);
+                statusDiv.innerHTML = '¡Modelo cargado! Detectando...';
+                detectFrame();
+            } catch(error) {
+                statusDiv.innerHTML = 'Error al cargar el modelo. Revisa la ruta y la consola (F12).';
+                console.error(error);
             }
         }
 
-        async function loop() {
-            if (webcam && webcam.canvas) {
-                webcam.update();
-                
-                if (model) {
-                    const prediction = await model.predict(webcam.canvas);
-                    let maxProbability = 0;
-                    let dominantClass = "";
-                    for (let i = 0; i < prediction.length; i++) {
-                        if (prediction[i].probability > maxProbability) {
-                            maxProbability = prediction[i].probability;
-                            dominantClass = prediction[i].className;
-                        }
-                    }
-                    if (labelContainer) {
-                        const nombreCompleto = NOMBRES_CLASES[dominantClass] || dominantClass;
-                        labelContainer.innerHTML = nombreCompleto;
-                    }
-                }
-            }
-            window.requestAnimationFrame(loop);
-        }
-
-        function init() {
-            populateModelSelector();
-            labelContainer = document.getElementById("label-container");
-            document.getElementById("load-model-btn").addEventListener("click", loadSelectedModel);
-            setupWebcam();
-        }
-
-        init();
+        main();
     </script>
 </body>
 </html>
